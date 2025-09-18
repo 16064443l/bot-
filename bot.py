@@ -29,6 +29,15 @@ c.execute('''
     )
 ''')
 
+c.execute('''
+    CREATE TABLE IF NOT EXISTS templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        folder_id INTEGER,
+        FOREIGN KEY(folder_id) REFERENCES folders(id)
+    )
+''')
+
 conn.commit()
 
 async def is_admin(update: Update) -> bool:
@@ -190,6 +199,32 @@ async def remove_role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         await update.message.reply_text(f'Папка "{folder_name}" не найдена.')
 
+async def templates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    c.execute("SELECT name FROM templates")
+    templates = c.fetchall()
+    if templates:
+        template_list = [template[0] for template in templates]
+        await update.message.reply_text(f'Доступные шаблоны: {", ".join(template_list)}')
+    else:
+        await update.message.reply_text('Нет доступных шаблонов.')
+
+async def save_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    template_name = context.args[0]
+    folder_name = context.args[1]
+    c.execute("SELECT id FROM folders WHERE name = ?", (folder_name,))
+    folder_id = c.fetchone()
+    if folder_id:
+        c.execute("SELECT * FROM templates WHERE name = ?", (template_name,))
+        template = c.fetchone()
+        if template:
+            await update.message.reply_text(f'Шаблон "{template_name}" уже существует.')
+        else:
+            c.execute("INSERT INTO templates (name, folder_id) VALUES (?, ?)", (template_name, folder_id[0]))
+            conn.commit()
+            await update.message.reply_text(f'Шаблон "{template_name}" сохранен.')
+    else:
+        await update.message.reply_text(f'Папка "{folder_name}" не найдена.')
+
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = (
         "Доступные команды:\n"
@@ -205,6 +240,8 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/delete_role <папка> <роль> - Удалить роль из папки.\n"
         "/add_folder <папка> - Создать новую папку.\n"
         "/delete_folder <папка> - Удалить папку.\n"
+        "/templates - Показать список доступных шаблонов.\n"
+        "/save_template <имя шаблона> <папка> - Сохранить шаблон.\n"
         "/help - Показать список доступных команд."
     )
     await update.message.reply_text(help_text)
@@ -269,7 +306,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('Привет! Я бот для управления ролями. Используй команды для взаимодействия со мной.')
 
 def main() -> None:
-    application = Application.builder().token('8292299057:AAHHC9ut47XBf37ugTRWwklk5b34IgY-v-A').build()
+    application = Application.builder().token('YOUR_BOT_TOKEN').build()
 
     application.add_handler(CommandHandler("occupy", occupy))
     application.add_handler(CommandHandler("free", free))
@@ -284,6 +321,8 @@ def main() -> None:
     application.add_handler(CommandHandler("delete_role", delete_role))
     application.add_handler(CommandHandler("add_folder", add_folder))
     application.add_handler(CommandHandler("delete_folder", delete_folder))
+    application.add_handler(CommandHandler("templates", templates))
+    application.add_handler(CommandHandler("save_template", save_template))
     application.add_handler(CommandHandler("start", start))
 
     application.run_polling()
