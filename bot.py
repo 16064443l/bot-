@@ -306,7 +306,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('Привет! Я бот для управления ролями. Используй команды для взаимодействия со мной.')
 
 def main() -> None:
-    application = Application.builder().token('YOUR_BOT_TOKEN').build()
+    application = Application.builder().token('8292299057:AAHHC9ut47XBf37ugTRWwklk5b34IgY-v-A').build()
 
     application.add_handler(CommandHandler("occupy", occupy))
     application.add_handler(CommandHandler("free", free))
