@@ -7,11 +7,14 @@ on:
   schedule:
     - cron: '*/5 * * * *'  # Запуск каждые 5 минут
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true  # Добавьте эту строку для отмены предыдущих запусков
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     name: Run Bot
-    cancel-in-progress: true  # Добавьте эту строку для отмены предыдущих запусков
 
     steps:
       - name: Checkout repository
