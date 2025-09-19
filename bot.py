@@ -1,7 +1,7 @@
 import logging
 import sqlite3
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -35,6 +35,42 @@ c.execute('''
         name TEXT UNIQUE,
         folder_id INTEGER,
         FOREIGN KEY(folder_id) REFERENCES folders(id)
+    )
+''')
+
+c.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER UNIQUE,
+        level INTEGER DEFAULT 1,
+        experience INTEGER DEFAULT 0
+    )
+''')
+
+c.execute('''
+    CREATE TABLE IF NOT EXISTS achievements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        achievement TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+''')
+
+c.execute('''
+    CREATE TABLE IF NOT EXISTS votes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role_name TEXT,
+        user_id INTEGER,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+''')
+
+c.execute('''
+    CREATE TABLE IF NOT EXISTS quests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        description TEXT,
+        reward TEXT
     )
 ''')
 
@@ -225,6 +261,107 @@ async def save_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         await update.message.reply_text(f'Папка "{folder_name}" не найдена.')
 
+async def gain_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = c.fetchone()
+    if user:
+        new_experience = user[3] + 10  # Добавьте логику для расчета опыта
+        if new_experience >= user[2] * 100:  # Простая система уровней
+            new_level = user[2] + 1
+            c.execute("UPDATE users SET level = ?, experience = 0 WHERE user_id = ?", (new_level, user_id))
+            await update.message.reply_text(f'Вы получили новый уровень! Теперь вы на уровне {new_level}!')
+        else:
+            c.execute("UPDATE users SET experience = ? WHERE user_id = ?", (new_experience, user_id))
+            await update.message.reply_text(f'Вы получили опыт и теперь на уровне {user[2]}!')
+    else:
+        c.execute("INSERT INTO users (user_id, level, experience) VALUES (?, 1, 10)", (user_id,))
+        await update.message.reply_text(f'Вы начали с уровня 1!')
+
+async def achievements(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    c.execute("SELECT achievement FROM achievements WHERE user_id = ?", (user_id,))
+    achievements = c.fetchall()
+    if achievements:
+        achievement_list = [achievement[0] for achievement in achievements]
+        await update.message.reply_text(f'Ваши достижения: {", ".join(achievement_list)}')
+    else:
+        await update.message.reply_text('У вас нет достижений.')
+
+async def vote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    role_name = context.args[0]
+    user_id = update.message.from_user.id
+    c.execute("SELECT * FROM votes WHERE role_name = ? AND user_id = ?", (role_name, user_id))
+    vote = c.fetchone()
+    if vote:
+        await update.message.reply_text(f'Вы уже голосовали за роль "{role_name}"!')
+    else:
+        c.execute("INSERT INTO votes (role_name, user_id) VALUES (?, ?)", (role_name, user_id))
+        conn.commit()
+        await update.message.reply_text(f'Вы проголосовали за роль "{role_name}"!')
+
+async def reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Добавьте логику для отправки напоминаний пользователям
+    await update.message.reply_text(f'Напоминание: у вас есть занятые роли, которые нужно освободить!')
+
+async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    city = context.args[0]
+    # Добавьте логику для получения погоды из API
+    await update.message.reply_text(f'Погода в {city}: {weather_info}')
+
+async def quests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    # Добавьте логику для отображения доступных квестов
+    await update.message.reply_text(f'Ваши квесты: {", ".join(user_quests)}')
+
+async def create_quest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await is_admin(update):
+        await update.message.reply_text('Только администраторы могут создавать квесты.')
+        return
+
+    quest_name = context.args[0]
+    quest_description = context.args[1]
+    quest_reward = context.args[2]
+    c.execute("SELECT * FROM quests WHERE name = ?", (quest_name,))
+    quest = c.fetchone()
+    if quest:
+        await update.message.reply_text(f'Квест "{quest_name}" уже существует.')
+    else:
+        c.execute("INSERT INTO quests (name, description, reward) VALUES (?, ?, ?)", (quest_name, quest_description, quest_reward))
+        conn.commit()
+        await update.message.reply_text(f'Квест "{quest_name}" создан.')
+
+async def quest_board(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    c.execute("SELECT * FROM quests")
+    quests = c.fetchall()
+    if quests:
+        quest_list = []
+        for quest in quests:
+            quest_list.append(f'**{quest[1]}**\nОписание: {quest[2]}\nНаграда: {quest[3]}')
+        await update.message.reply_text('\n\n'.join(quest_list), parse_mode='Markdown')
+    else:
+        await update.message.reply_text('Нет доступных квестов.')
+
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    c.execute("SELECT level, experience FROM users WHERE user_id = ?", (user_id,))
+    user = c.fetchone()
+    if user:
+        level = user[0]
+        experience = user[1]
+        await update.message.reply_text(f'Ваш профиль:\nУровень: {level}\nОпыт: {experience}')
+    else:
+        await update.message.reply_text('Ваш профиль не найден.')
+
+async def list_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    c.execute("SELECT name FROM folders")
+    folders = c.fetchall()
+    if folders:
+        folder_list = [folder[0] for folder in folders]
+        await update.message.reply_text(f'Доступные папки: {", ".join(folder_list)}')
+    else:
+        await update.message.reply_text('Нет доступных папок.')
+
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = (
         "Доступные команды:\n"
@@ -242,6 +379,16 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/delete_folder <папка> - Удалить папку.\n"
         "/templates - Показать список доступных шаблонов.\n"
         "/save_template <имя шаблона> <папка> - Сохранить шаблон.\n"
+        "/gain_experience - Получить опыт.\n"
+        "/achievements - Показать ваши достижения.\n"
+        "/vote <роль> - Проголосовать за роль.\n"
+        "/reminders - Получить напоминания.\n"
+        "/weather <город> - Получить погоду.\n"
+        "/quests - Показать доступные квесты.\n"
+        "/create_quest <название> <описание> <награда> - Создать квест (только для администраторов).\n"
+        "/quest_board - Показать доску с квестами.\n"
+        "/profile - Показать ваш профиль.\n"
+        "/list_folders - Показать список доступных папок.\n"
         "/help - Показать список доступных команд."
     )
     await update.message.reply_text(help_text)
@@ -303,7 +450,30 @@ async def delete_folder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f'Папка "{folder_name}" не найдена.')
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text('Привет! Я бот для управления ролями. Используй команды для взаимодействия со мной.')
+    keyboard = [
+        [InlineKeyboardButton("Список папок", callback_data='list_folders')],
+        [InlineKeyboardButton("Список ролей", callback_data='role_list')],
+        [InlineKeyboardButton("Мои роли", callback_data='my_role')],
+        [InlineKeyboardButton("Профиль", callback_data='profile')],
+        [InlineKeyboardButton("Доска квестов", callback_data='quest_board')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text('Привет! Я бот для управления ролями. Используй команды или кнопки для взаимодействия со мной.', reply_markup=reply_markup)
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == 'list_folders':
+        await list_folders(query, context)
+    elif query.data == 'role_list':
+        await role_list(query, context)
+    elif query.data == 'my_role':
+        await my_role(query, context)
+    elif query.data == 'profile':
+        await profile(query, context)
+    elif query.data == 'quest_board':
+        await quest_board(query, context)
 
 def main() -> None:
     application = Application.builder().token('8292299057:AAHHC9ut47XBf37ugTRWwklk5b34IgY-v-A').build()
@@ -323,7 +493,18 @@ def main() -> None:
     application.add_handler(CommandHandler("delete_folder", delete_folder))
     application.add_handler(CommandHandler("templates", templates))
     application.add_handler(CommandHandler("save_template", save_template))
+    application.add_handler(CommandHandler("gain_experience", gain_experience))
+    application.add_handler(CommandHandler("achievements", achievements))
+    application.add_handler(CommandHandler("vote", vote))
+    application.add_handler(CommandHandler("reminders", reminders))
+    application.add_handler(CommandHandler("weather", weather))
+    application.add_handler(CommandHandler("quests", quests))
+    application.add_handler(CommandHandler("create_quest", create_quest))
+    application.add_handler(CommandHandler("quest_board", quest_board))
+    application.add_handler(CommandHandler("profile", profile))
+    application.add_handler(CommandHandler("list_folders", list_folders))
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button))
 
     application.run_polling()
 
